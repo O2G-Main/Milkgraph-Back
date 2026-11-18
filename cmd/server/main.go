@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"milkgraph/internal/ai"
 	"milkgraph/internal/api"
 	"milkgraph/internal/sse"
 	"milkgraph/internal/store"
@@ -61,7 +62,11 @@ func run(cfg config, log *slog.Logger) error {
 
 	hub := sse.New(db)
 	srv := &api.Server{Mode: cfg.Mode, DB: db, Hub: hub, JWTSecret: cfg.JWTSecret,
-		JWTIssuer: cfg.JWTIssuer, JWTAudience: cfg.JWTAudience, Origins: cfg.Origins}
+		JWTIssuer: cfg.JWTIssuer, JWTAudience: cfg.JWTAudience, Origins: cfg.Origins,
+		AI: ai.New(cfg.AIServiceURL, cfg.AIServiceToken)}
+	if srv.AI.Enabled() {
+		log.Info("layanan AI aktif", "url", cfg.AIServiceURL)
+	}
 	if err := srv.Bootstrap(ctx); err != nil {
 		return fmt.Errorf("bootstrap: %w", err)
 	}

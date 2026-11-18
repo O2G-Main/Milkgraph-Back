@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"milkgraph/internal/ai"
 	"milkgraph/internal/graph"
 	"milkgraph/internal/sse"
 	"milkgraph/internal/store"
@@ -28,6 +29,7 @@ type Server struct {
 	JWTIssuer   string
 	JWTAudience string
 	Origins     []string
+	AI          *ai.Client
 	seeds       *SeedData
 	dyn         *DynamicState
 	trace       *trace.Service
@@ -279,7 +281,18 @@ func (s *Server) Handler() http.Handler {
 		if len(strings.TrimSpace(b.Question)) == 0 || len([]rune(b.Question)) > 1000 {
 			return nil, invalid("Pertanyaan wajib 1-1000 karakter.", "question")
 		}
-		return s.trace.Ask(b.Question), nil
+		a := s.trace.Ask(b.Question)
+		s.lampirkanNarasiAI(r.Context(), a)
+		return a, nil
+	})
+	register("POST /api/v1/assistant/narrate", "", func(r *http.Request) (any, error) {
+		var b struct {
+			BatchID string `json:"batch_id"`
+		}
+		if err := decode(r, &b); err != nil {
+			return nil, err
+		}
+		return s.narasiAI(r.Context(), strings.TrimSpace(b.BatchID))
 	})
 	register("GET /api/v1/trace/backward", "", func(r *http.Request) (any, error) {
 		v, e := s.trace.Backward(r.URL.Query().Get("lotId"))

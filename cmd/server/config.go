@@ -18,17 +18,20 @@ type config struct {
 	DatabaseURL, Mode, BindAddress    string
 	JWTSecret, JWTIssuer, JWTAudience string
 	Origins                           []string
+	AIServiceURL, AIServiceToken      string
 }
 
 // loadConfig validates env. Errors never include values of secrets or DSN.
 func loadConfig(get func(string) string) (config, error) {
 	c := config{
-		DatabaseURL: get("DATABASE_URL"),
-		Mode:        get("MODE"),
-		BindAddress: get("BIND_ADDRESS"),
-		JWTSecret:   get("JWT_SECRET"),
-		JWTIssuer:   get("JWT_ISSUER"),
-		JWTAudience: get("JWT_AUDIENCE"),
+		DatabaseURL:    get("DATABASE_URL"),
+		Mode:           get("MODE"),
+		BindAddress:    get("BIND_ADDRESS"),
+		JWTSecret:      get("JWT_SECRET"),
+		JWTIssuer:      get("JWT_ISSUER"),
+		JWTAudience:    get("JWT_AUDIENCE"),
+		AIServiceURL:   get("AI_SERVICE_URL"),
+		AIServiceToken: get("AI_SERVICE_TOKEN"),
 	}
 	if c.DatabaseURL == "" {
 		return c, errors.New("DATABASE_URL wajib diisi")
