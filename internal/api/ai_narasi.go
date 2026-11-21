@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"regexp"
 	"strconv"
@@ -34,6 +35,7 @@ func (s *Server) lampirkanNarasiAI(ctx context.Context, answer map[string]any) {
 		slog.Warn("narasi AI tidak tersedia, jawaban lokal dipakai", "error", err)
 		return
 	}
+	s.catatPemakaianAI(ctx, "narrate", payload, resp)
 	answer["aiNarasi"] = keMap(resp)
 }
 
@@ -58,6 +60,50 @@ func (s *Server) narasiAI(ctx context.Context, batchID string) (any, error) {
 		slog.Warn("panggilan layanan AI gagal", "error", err)
 		return nil, &apiError{502, "AI_UNAVAILABLE", "Layanan AI tidak dapat dihubungi.", ""}
 	}
+	s.catatPemakaianAI(ctx, "narrate", payload, resp)
+	return keMap(resp), nil
+}
+
+// faktaChatFG merangkai fakta FG-1013-07 dari payload narasi menjadi daftar
+// konteks_fakta untuk /ai/chat (kontrak v2): service AI hanya boleh menjawab
+// dari fakta ini, secara ekstraktif.
+func faktaChatFG(p ai.NarrateRequest) []string {
+	fakta := []string{fmt.Sprintf("Status QC batch %s: %s.", p.BatchID, p.Konteks.QCStatus)}
+	for _, leg := range p.Konteks.KakiPerjalanan {
+		fakta = append(fakta, fmt.Sprintf("Kaki perjalanan %s ke %s berlangsung %g menit.", leg.Dari, leg.Ke, leg.DurasiMenit))
+	}
+	for _, k := range p.Kandidat {
+		fakta = append(fakta, fmt.Sprintf("Kandidat akar masalah %s (skor Backend %.2f): %s.", k.Kode, k.Skor, strings.Join(k.Bukti, "; ")))
+	}
+	return fakta
+}
+
+// chatAI melayani POST /api/v1/assistant/chat: pertanyaan pengguna diteruskan
+// ke service AI bersama konteks fakta FG-1013-07 yang dipilih Backend (Graph
+// RAG sederhana sesuai kontrak v2). Berbeda dari /assistant/ask yang menjawab
+// lokal, endpoint ini memang bergantung pada service AI: 503 bila belum
+// dikonfigurasi, 502 bila tidak terjangkau, pola yang sama dengan narrate.
+func (s *Server) chatAI(ctx context.Context, pertanyaan string) (any, error) {
+	if s.AI == nil || !s.AI.Enabled() {
+		return nil, &apiError{503, "UNAVAILABLE", "Layanan AI belum dikonfigurasi.", ""}
+	}
+	payload, ok := s.payloadNarasiFG()
+	if !ok {
+		return nil, &apiError{503, "UNAVAILABLE", "Fakta batch tidak tersedia.", ""}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 9*time.Second)
+	defer cancel()
+	req := ai.ChatRequest{
+		Pertanyaan:   pertanyaan,
+		KonteksFakta: faktaChatFG(payload),
+		LabelData:    payload.LabelData,
+	}
+	resp, err := s.AI.Chat(ctx, req)
+	if err != nil {
+		slog.Warn("panggilan chat AI gagal", "error", err)
+		return nil, &apiError{502, "AI_UNAVAILABLE", "Layanan AI tidak dapat dihubungi.", ""}
+	}
+	s.catatPemakaianAI(ctx, "chat", req, resp)
 	return keMap(resp), nil
 }
 

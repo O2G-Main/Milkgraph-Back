@@ -111,6 +111,71 @@ func (c *Client) NarrateRootCause(ctx context.Context, req NarrateRequest) (*Nar
 	return &out, nil
 }
 
+// ChatRequest is the POST /ai/chat payload: the user's question plus the
+// batch facts the Backend selected for it (contract: konteks_fakta). The AI
+// service answers extractively from these facts only.
+type ChatRequest struct {
+	Pertanyaan   string   `json:"pertanyaan"`
+	KonteksFakta []string `json:"konteks_fakta"`
+	LabelData    string   `json:"label_data"`
+}
+
+// ChatResponse mirrors the AI service chat response.
+type ChatResponse struct {
+	Jawaban   string `json:"jawaban"`
+	Sumber    string `json:"sumber"`
+	LabelData string `json:"label_data"`
+}
+
+// Chat sends a question plus Backend-selected facts to the AI service and
+// returns its extractive answer.
+func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+	var out ChatResponse
+	if err := c.post(ctx, "/ai/chat", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// PriorityAction is one ranked follow-up action in the repair-priority
+// explanation payload (contract: urutan_prioritas). The Backend computes the
+// ranking; the AI service only explains it.
+type PriorityAction struct {
+	Rank       int    `json:"rank"`
+	Tindakan   string `json:"tindakan"`
+	AlasanKode string `json:"alasan_kode"`
+}
+
+// ExplainRequest is the POST /ai/repair-priority/explain payload.
+type ExplainRequest struct {
+	BatchID            string           `json:"batch_id"`
+	UrutanPrioritas    []PriorityAction `json:"urutan_prioritas"`
+	PelanggaranSebelum int              `json:"pelanggaran_sebelum"`
+	PelanggaranSesudah int              `json:"pelanggaran_sesudah"`
+	JumlahConstraint   int              `json:"jumlah_constraint"`
+	LabelData          string           `json:"label_data"`
+}
+
+// ExplainResponse mirrors the AI service repair-priority response. The Jev
+// assessment stays raw JSON so new Jev fields never break the Backend.
+type ExplainResponse struct {
+	BatchID    string          `json:"batch_id"`
+	Penjelasan string          `json:"penjelasan"`
+	Sumber     string          `json:"sumber"`
+	LabelData  string          `json:"label_data"`
+	Jev        json.RawMessage `json:"jev"`
+}
+
+// Explain sends a Backend-computed priority ranking to the AI service and
+// returns its human-readable explanation plus the structured Jev assessment.
+func (c *Client) Explain(ctx context.Context, req ExplainRequest) (*ExplainResponse, error) {
+	var out ExplainResponse
+	if err := c.post(ctx, "/ai/repair-priority/explain", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 func (c *Client) post(ctx context.Context, path string, payload, out any) error {
 	if !c.Enabled() {
 		return errors.New("ai: token layanan belum dikonfigurasi")

@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -169,7 +168,7 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, 200, map[string]any{"status": "ready"})
 	})
 	static := map[string]any{
-		"/roles": seeds.Roles, "/sources": seeds.Scenario["sources"], "/assets": seeds.Scenario["assets"],
+		"/sources": seeds.Scenario["sources"], "/assets": seeds.Scenario["assets"],
 		"/assets/cip-log": seeds.Ops["cipLog"], "/assets/cip-policy": map[string]any{"tankIntervalHours": 24}, "/assets/mid-tanks": seeds.Ops["midTanks"],
 		"/production/fillers": seeds.Ops["fillers"], "/production/aseptic-tanks": seeds.Ops["asepticTanks"], "/production/unit-states": seeds.Ops["UNIT_STATE"], "/production/changeover-matrix": seeds.Ops["changeoverMatrix"],
 		"/supply/farms": seeds.Ops["farms"], "/supply/trend": seeds.Ops["trend"], "/quality/active-event": seeds.Scenario["qcEvent"],
@@ -229,18 +228,25 @@ func (s *Server) Handler() http.Handler {
 		if err != nil {
 			return nil, err
 		}
-		def := obj(seeds.Roles["roles"])[a.Role]
-		permissions := []string{}
-		for p, x := range obj(seeds.Roles["permissions"]) {
-			for _, v := range arr(obj(x)["roles"]) {
-				if str(v) == a.Role {
-					permissions = append(permissions, p)
-				}
-			}
+		// Sesi membaca registri role Tahap 3 agar role baru dan role
+		// kustom juga mendapat daftar permission yang benar.
+		reg, err := s.roleRegistry(r.Context())
+		if err != nil {
+			return nil, err
 		}
-		sort.Strings(permissions)
-		d := obj(def)
-		return map[string]any{"user": map[string]any{"name": a.Name, "role": d["label"], "initials": d["initials"], "shift": "Shift Siang"}, "role": a.Role, "permissions": permissions}, nil
+		rec, ok := cariRole(reg, a.Role)
+		if !ok {
+			return nil, &apiError{401, "UNAUTHENTICATED", "Role tidak valid.", ""}
+		}
+		label, _, initials := displayRole(rec)
+		permissions, err := s.permissionsOf(r.Context(), a.Role)
+		if err != nil {
+			return nil, err
+		}
+		if permissions == nil {
+			permissions = []string{}
+		}
+		return map[string]any{"user": map[string]any{"name": a.Name, "role": label, "initials": initials, "shift": "Shift Siang"}, "role": a.Role, "permissions": permissions}, nil
 	})
 	register("GET /api/v1/shifts", "", func(r *http.Request) (any, error) {
 		return []any{map[string]any{"id": "2026-10-14-siang", "label": "Shift Siang", "window": "14.00 - 22.00", "date": "Rab 14 Okt", "selected": true, "available": true}}, nil
@@ -293,6 +299,19 @@ func (s *Server) Handler() http.Handler {
 			return nil, err
 		}
 		return s.narasiAI(r.Context(), strings.TrimSpace(b.BatchID))
+	})
+	register("POST /api/v1/assistant/chat", "", func(r *http.Request) (any, error) {
+		var b struct {
+			Question string `json:"question"`
+		}
+		if err := decode(r, &b); err != nil {
+			return nil, err
+		}
+		q := strings.TrimSpace(b.Question)
+		if len(q) == 0 || len([]rune(q)) > 1000 {
+			return nil, invalid("Pertanyaan wajib 1-1000 karakter.", "question")
+		}
+		return s.chatAI(r.Context(), q)
 	})
 	register("GET /api/v1/trace/backward", "", func(r *http.Request) (any, error) {
 		v, e := s.trace.Backward(r.URL.Query().Get("lotId"))
