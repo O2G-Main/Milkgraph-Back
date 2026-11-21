@@ -123,13 +123,23 @@ func (s *Server) registerDynamic(register func(string, string, endpoint), mux *h
 		if e := decode(r, &b); e != nil {
 			return nil, e
 		}
-		def, ok := domain.RolesMap[domain.RoleId(b.Role)]
+		// Pilihan role demo membaca registri Tahap 3: tujuh role bawaan
+		// matriks dan role kustom Superadmin semuanya dapat dipilih.
+		reg, e := s.roleRegistry(r.Context())
+		if e != nil {
+			return nil, e
+		}
+		rec, ok := cariRole(reg, b.Role)
 		if !ok {
 			return nil, invalid("Role tidak valid.", "role")
 		}
-		perms := domain.PermissionsForRole(domain.RoleId(b.Role))
+		label, user, initials := displayRole(rec)
+		perms := []domain.Permission{}
+		for _, p := range rec.Permissions {
+			perms = append(perms, domain.Permission(p))
+		}
 		sort.Slice(perms, func(i, j int) bool { return perms[i] < perms[j] })
-		return map[string]any{"result": domain.Session{User: domain.UserInfo{Name: def.User, Role: def.Label, Initials: def.Initials, Shift: "Shift Siang"}, Role: domain.RoleId(b.Role), Permissions: perms}, "log": nil}, nil
+		return map[string]any{"result": domain.Session{User: domain.UserInfo{Name: user, Role: label, Initials: initials, Shift: "Shift Siang"}, Role: domain.RoleId(b.Role), Permissions: perms}, "log": nil}, nil
 	})
 	register("POST /api/v1/demo/reset", "", func(r *http.Request) (any, error) {
 		if s.Mode != "" && s.Mode != "demo" {
@@ -447,6 +457,15 @@ func (s *Server) registerDynamic(register func(string, string, endpoint), mux *h
 		})
 	})
 	s.registerHolds(register)
+	s.registerRTArrivals(register)
+	s.registerTransfers(register)
+	s.registerPOs(register)
+	s.registerSchedules(register)
+	s.registerDashboard(register)
+	s.registerJadwalNarasi(register)
+	s.registerDowntime(register)
+	s.registerBiaya(register)
+	s.registerRoles(register)
 	register("GET /api/v1/data-sources", "", func(r *http.Request) (any, error) {
 		out := []any{}
 		for _, v := range arr(s.seeds.Ops["dataSources"]) {

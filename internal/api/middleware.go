@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -52,14 +53,27 @@ func (s *Server) authenticate(r *http.Request) (*AuthContext, error) {
 	}
 
 	roleId := domain.RoleId(demoRole)
-	def, ok := domain.RolesMap[roleId]
+	if def, ok := domain.RolesMap[roleId]; ok {
+		return &AuthContext{
+			Role: string(roleId),
+			Name: def.User,
+		}, nil
+	}
+
+	// Role di luar empat bawaan domain (superadmin, lab, operator, dan
+	// role kustom Superadmin) divalidasi ke registri role Tahap 3.
+	reg, err := s.roleRegistry(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	rec, ok := cariRole(reg, demoRole)
 	if !ok {
 		return nil, &apiError{status: 401, code: "UNAUTHENTICATED", message: "Role tidak valid."}
 	}
 
 	return &AuthContext{
-		Role: string(roleId),
-		Name: def.User,
+		Role: rec.RoleID,
+		Name: rec.Nama,
 	}, nil
 }
 
@@ -148,7 +162,15 @@ func (s *Server) verifyJWT(tokenStr string) (*AuthContext, error) {
 	}
 	roleId := domain.RoleId(role)
 	if _, ok := domain.RolesMap[roleId]; !ok {
-		return nil, &apiError{status: 401, code: "UNAUTHENTICATED", message: "Role token tidak valid."}
+		// Samakan dengan jalur demo: role Tahap 3 dan role kustom yang
+		// terdaftar di registri juga sah sebagai klaim role token.
+		reg, regErr := s.roleRegistry(context.Background())
+		if regErr != nil {
+			return nil, &apiError{status: 401, code: "UNAUTHENTICATED", message: "Role token tidak valid."}
+		}
+		if _, found := cariRole(reg, role); !found {
+			return nil, &apiError{status: 401, code: "UNAUTHENTICATED", message: "Role token tidak valid."}
+		}
 	}
 
 	nameRaw, ok := rawClaims["name"]
@@ -207,12 +229,18 @@ func (s *Server) authorize(r *http.Request, perm string) error {
 	if err != nil {
 		return err
 	}
-	permission := domain.Permission(perm)
-	if !domain.Can(domain.RoleId(auth.Role), permission) {
+	// Otorisasi membaca registri role Tahap 3 (state store bila ada,
+	// fallback seed matriks) agar perubahan role oleh Superadmin
+	// langsung berlaku tanpa mengubah kode.
+	ok, err := s.roleCan(r.Context(), auth.Role, perm)
+	if err != nil {
+		return err
+	}
+	if !ok {
 		return &apiError{
 			status:  403,
 			code:    "FORBIDDEN",
-			message: domain.WhoCan(permission),
+			message: s.whoCanMessage(r.Context(), perm),
 		}
 	}
 	return nil
@@ -251,7 +279,7 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 				return
 			}
 			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Demo-Role, Last-Event-ID")
 			w.Header().Set("Access-Control-Expose-Headers", "Location, Retry-After, X-Request-ID")
 		}
